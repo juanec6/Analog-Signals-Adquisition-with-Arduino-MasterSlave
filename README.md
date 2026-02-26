@@ -1,58 +1,48 @@
 # Arduino Master-Slave Monitoring System
 
-Monitoring system based on Arduino using I2C master-slave architecture. The slave (Nano) handles all hardware logic while the master (Uno) manages the display and menu rendering.
+Monitoring system based on Arduino using I2C master-slave architecture. The slave (Nano) handles all hardware logic and menu state, while the master (Uno) manages the display and renders each screen based on what the slave reports.
 
 ---
 
 ## Architecture
 
 ```
-┌─────────────────────────────┐        I2C (5 bytes)       ┌──────────────────────────────┐
-│       Arduino Nano          │ ─────────────────────────► │       Arduino Uno            │
-│         (Slave)             │                             │         (Master)             │
-│                             │                             │                              │
-│  - Joystick navigation      │                             │  - LCD 16x2 display          │
-│  - Enter / Back buttons     │                             │  - RTC DS3231                │
-│  - Servo motor              │                             │  - Menu rendering            │
-│  - Ultrasonic HC-SR04       │                             │  - Case-based display logic  │
-│  - Menu state management    │                             │                              │
-└─────────────────────────────┘                             └──────────────────────────────┘
+┌──────────────────────────────┐      I2C (2 bytes)      ┌──────────────────────────────┐
+│       Arduino Nano           │ ──────────────────────► │       Arduino Uno            │
+│         (Slave)              │                          │         (Master)             │
+│                              │                          │                              │
+│  - Joystick navigation       │                          │  - LCD 16x2 (0x27)           │
+│  - Enter / Back buttons      │                          │  - RTC DS3231                │
+│  - Menu state management     │                          │  - Menu rendering            │
+│  - menuLevel & currentOption │                          │  - Case-based display logic  │
+└──────────────────────────────┘                          └──────────────────────────────┘
 ```
 
 ---
 
 ## I2C Protocol
 
-The Nano sends a fixed-byte packet to the Uno on every request:
+The Nano sends a 2-byte packet to the Uno on every request:
 
-| Byte | Content         | Type     | Range   |
-|------|-----------------|----------|---------|
-| 0    | `menuLevel`     | uint8_t  | 0–6     |
-| 1    | `currentOption` | int8_t   | 0–4     |
-| 2    | `servoPos`      | uint8_t  | 0–180   |
-| 3    | `distance HIGH` | uint8_t  | —       |
-| 4    | `distance LOW`  | uint8_t  | —       |
-
-Distance is reconstructed on the master side as:
-```cpp
-distance = (distH << 8) | distL;
-```
+| Byte | Content         | Type    | Description                         |
+|------|-----------------|---------|-------------------------------------|
+| 0    | `menuLevel`     | uint8_t | Current screen (0 = home, 1 = menu) |
+| 1    | `currentOption` | int8_t  | Selected menu item (0–4)            |
 
 ---
 
 ## Menu Structure
 
 ```
-[case 0] Home — Time and date (RTC)
-    ↓ ENTER
-[case 1] Menu — Joystick navigation
-    ↓ ENTER
-[case 2] Radar       — Auto servo sweep + ultrasonic distance
-[case 3] Logs        — Detection history
-[case 4] Manual Op   — Joystick-controlled servo position
-[case 5] Time Settings
-[case 6] Alarm
-    ↑ BACK (returns one level up)
+[menuLevel 0] Home — Time and date from RTC
+      ↓ ENTER (SW_PIN)
+[menuLevel 1] Menu — Joystick navigates up/down between options:
+                      0. Radar
+                      1. Logs
+                      2. Microphone
+                      3. Humidity
+                      4. Temperature
+      ↑ BACK — returns to home screen
 ```
 
 ---
@@ -60,41 +50,40 @@ distance = (distH << 8) | distL;
 ## Hardware
 
 ### Arduino Nano (Slave)
-| Component         | Pin  |
-|-------------------|------|
-| Enter button      | D3   |
-| Back button       | D6   |
-| Red LED           | D5   |
-| Green LED         | D4   |
-| Servo motor       | D2   |
-| Ultrasonic TRIG   | D8   |
-| Ultrasonic ECHO   | D7   |
-| Joystick X        | A0   |
-| Joystick Y        | A1   |
+| Component       | Pin |
+|-----------------|-----|
+| Enter button    | D3  |
+| Back button     | D6  |
+| Red LED         | D5  |
+| Green LED       | D4  |
+| Joystick X      | A0  |
+| Joystick Y      | A1  |
 
 ### Arduino Uno (Master)
-| Component         | Pin        |
-|-------------------|------------|
-| LCD I2C (0x27)    | SDA/SCL    |
-| RTC DS3231        | SDA/SCL    |
+| Component       | Connection  |
+|-----------------|-------------|
+| LCD I2C (0x27)  | SDA / SCL   |
+| RTC DS3231      | SDA / SCL   |
 
 ---
 
 ## Dependencies
 
 - `Wire.h` — I2C communication
-- `LiquidCrystal_I2C.h` — LCD control
+- `LiquidCrystal_I2C.h` — LCD 16x2 control
 - `RTClib.h` — RTC DS3231
-- `Servo.h` — Servo motor control
 
 ---
 
 ## Key Design Decisions
 
-- **The Nano is the brain** — all navigation, button debouncing, and hardware logic runs on the slave. The Uno is a pure display renderer.
-- **Fixed-byte protocol** — the Nano always sends the same packet regardless of the active menu case, keeping communication simple and predictable.
-- **RTC is local to the Uno** — time and date are read directly on the master for the home screen and alarm logic without involving I2C.
-- **`volatile` variables on the Nano** — any variable shared between `loop()` and the `sendEvent()` ISR callback is declared `volatile` to prevent the compiler from caching stale values.
+- **Nano is the brain** — all navigation, button debouncing, and joystick logic runs on the slave. The Uno is a pure display renderer.
+- **2-byte protocol** — only `menuLevel` and `currentOption` are sent, keeping communication minimal for the current stage.
+- **RTC is local to the Uno** — time and date are read directly on the master for the home screen, no I2C overhead needed for that case.
+- **`volatile` on shared variables** — `menuLevel` and `currentOption` are declared `volatile` on the Nano because they are written in `loop()` and read inside the `sendEvent()` ISR callback.
+- **Joystick deadzone** — set to 250 (out of 512) to avoid accidental navigation from a resting joystick.
+- **`int8_t` for `currentOption`** — used instead of `uint8_t` to correctly handle the wrap-around check `if(currentOption < 0)` when navigating up from the first item.
+- **lcd.clear() on state change** — the master only clears the display when `menuLevel` or `currentOption` changes, avoiding constant flicker.
 
 ---
 
@@ -102,9 +91,10 @@ distance = (distH << 8) | distL;
 
 - [x] I2C master-slave communication
 - [x] Menu navigation with joystick
-- [x] Home screen with RTC
-- [ ] Radar auto sweep
-- [ ] Manual servo operation
+- [x] Home screen with RTC (time and date)
+- [x] Menu rendering with scroll preview
+- [ ] Radar — servo sweep + ultrasonic distance
 - [ ] Logs
-- [ ] Time settings
-- [ ] Alarm
+- [ ] Microphone
+- [ ] Humidity
+- [ ] Temperature
