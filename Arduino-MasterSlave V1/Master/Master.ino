@@ -34,6 +34,10 @@ uint8_t day;
 uint8_t month;
 uint16_t year;
 
+//Servo an radar
+uint8_t servoPos;
+uint32_t distance;
+
 // setup
 void setup()
 {
@@ -55,11 +59,13 @@ void setup()
 
 void loop()
 {
-  Wire.requestFrom(SLAVE_ADDR, 2);
-  if(Wire.available())
+  Wire.requestFrom(SLAVE_ADDR, 4);
+  if(Wire.available() == 4)
   {
     menuLevel = Wire.read();
     currentOption = Wire.read();
+    servoPos = Wire.read();
+    distance = Wire.read();
   }
 
   if(menuLevel != lastMenuLevel || currentOption != lastCurrentOption)
@@ -110,6 +116,7 @@ void loop()
     }
     case 1:
     {
+      //Menu Navigation
       int8_t upper = currentOption;
       int8_t lower = (currentOption + 1)%numOptions;
       lcd.setCursor(0, 0);
@@ -119,6 +126,58 @@ void loop()
       lcd.print(F("  "));
       lcd.print(menu[lower]);
       break;
+    }
+
+    //Option selected
+    case 2:
+    {
+      switch(currentOption)
+      {
+        //Radar
+        case 0:
+        {
+          lcd.setCursor(0, 0);
+          lcd.print(F("Angle: "));
+          lcd.print(servoPos);
+          lcd.print(F("   "));
+          lcd.setCursor(0, 1);
+          lcd.print(F("Distance: "));
+          lcd.print(distance);
+          lcd.print(F("   "));
+          break;
+        }
+        //Logs
+        case 1:
+        {
+          lcd.setCursor(0, 0);
+          lcd.print(F("Hola Logs"));
+          break;
+        }
+
+        //Microphone
+        case 2:
+        {
+          lcd.setCursor(0, 0);
+          lcd.print(F("Hola Microphone"));
+          break;
+        }
+
+        //Humidity
+        case 3:
+        {
+          lcd.setCursor(0, 0);
+          lcd.print(F("Hola Humidity"));
+          break;
+        }
+
+        // Temperature
+        case 4:
+        {
+          lcd.setCursor(0, 0);
+          lcd.print(F("Hola Temperature"));
+          break;
+        }
+      }
     }
   }
 }
